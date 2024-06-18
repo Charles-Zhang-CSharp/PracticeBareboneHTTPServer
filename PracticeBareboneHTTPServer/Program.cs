@@ -1,6 +1,5 @@
 ﻿using System.Net.Sockets;
 using System.Text;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace PracticeBareboneHTTPServer
 {
@@ -8,9 +7,10 @@ namespace PracticeBareboneHTTPServer
     {
         static void Main(string[] args)
         {
-            const int port = 9000;
-            TcpListener server = new TcpListener(System.Net.IPAddress.Any, port);
+            int port = args.Length != 0 ? int.Parse(args.First()) : 9000;
+            TcpListener server = new(System.Net.IPAddress.Any, port);
             server.Start();
+            Console.WriteLine($"http://0.0.0.0:{port}");
 
             // Buffer for reading data
             byte[] bytes = new byte[2048];
@@ -29,7 +29,7 @@ namespace PracticeBareboneHTTPServer
                 while (stream.DataAvailable && (i = stream.Read(bytes, 0, bytes.Length)) != 0)
                 {
                     // Translate data bytes to a ASCII string.
-                    string data = System.Text.Encoding.UTF8.GetString(bytes, 0, i);
+                    string data = Encoding.UTF8.GetString(bytes, 0, i);
                     Console.WriteLine($"Received: {data}");
                     sb.Append(data);
                 }
@@ -45,12 +45,13 @@ namespace PracticeBareboneHTTPServer
                     <head>
                       <meta charset="utf-8">
                       <meta name="viewport" content="width=device-width, initial-scale=1">
-                      <title>HTML5 Boilerplate</title>
+                      <title>HTTP Server Welcome!</title>
                       <link rel="stylesheet" href="styles.css">
                     </head>
 
                     <body>
-                      <h1>Page Title</h1>
+                      <h1>Barebone HTTP Server</h1>
+                      <p>Hello World!</>
                       <script src="scripts.js"></script>
                     </body>
 
@@ -59,14 +60,14 @@ namespace PracticeBareboneHTTPServer
                 string replyHeader = $"""
                     HTTP/1.1 200 OK
                     Content-Length: {body.Length}
-                    Content-Type: text/plain; charset=utf-8
+                    Content-Type: text/html; charset=utf-8
                     """;
                 string reply = $"""
                     {replyHeader}
                     
                     {body}
                     """;
-                byte[] replyData = System.Text.Encoding.UTF8.GetBytes(reply);
+                byte[] replyData = Encoding.UTF8.GetBytes(reply);
                 stream.Write(replyData);
             }
         }
