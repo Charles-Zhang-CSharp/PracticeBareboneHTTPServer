@@ -12,30 +12,52 @@ namespace PracticeBareboneHTTPServer
             server.Start();
             Console.WriteLine($"http://0.0.0.0:{port}");
 
-            // Buffer for reading data
-            byte[] bytes = new byte[2048];
-
             while (true)
             {
                 Console.Write("Waiting for a connection... ");
 
-                using TcpClient client = server.AcceptTcpClient();
+                TcpClient client = server.AcceptTcpClient();
                 Console.WriteLine("Connected!");
 
-                // Loop to receive all the data sent by the client.
+                // Serve each connection on its own task so a slow or idle client (e.g. a browser's speculative preconnect) can't stall the accept loop.
+                _ = Task.Run(() => HandleClient(client));
+            }
+        }
+
+        static void HandleClient(TcpClient client)
+        {
+            using (client)
+            {
+                client.ReceiveTimeout = 5000;
+                NetworkStream stream = client.GetStream();
+
+                // Buffer for reading data
+                byte[] bytes = new byte[2048];
+
+                // Loop until the whole request header (terminated by an empty line) has arrived.
+                // Note: NetworkStream.DataAvailable only reports what's already buffered and is often still false right after accepting, so it can't be used to decide when the request is complete.
                 StringBuilder sb = new();
                 int i;
-                NetworkStream stream = client.GetStream();
-                while (stream.DataAvailable && (i = stream.Read(bytes, 0, bytes.Length)) != 0)
+                try
                 {
-                    // Translate data bytes to a ASCII string.
-                    string data = Encoding.UTF8.GetString(bytes, 0, i);
-                    Console.WriteLine($"Received: {data}");
-                    sb.Append(data);
+                    while (!sb.ToString().Contains("\r\n\r\n") && (i = stream.Read(bytes, 0, bytes.Length)) != 0)
+                    {
+                        // Translate data bytes to a string.
+                        string data = Encoding.UTF8.GetString(bytes, 0, i);
+                        Console.WriteLine($"Received: {data}");
+                        sb.Append(data);
+                    }
+                }
+                catch (IOException)
+                {
+                    Console.WriteLine("Client timed out or disconnected before sending a full request.");
+                    return;
                 }
 
                 string requestHeader = sb.ToString().TrimEnd();
                 Console.WriteLine($"Complete message: {requestHeader}");
+                if (requestHeader.Length == 0)
+                    return; // Client closed without sending anything
 
                 // Send reply
                 string body = $"""
@@ -51,24 +73,32 @@ namespace PracticeBareboneHTTPServer
 
                     <body>
                       <h1>Barebone HTTP Server</h1>
-                      <p>Hello World!</>
+                      <p>Hello World!</p>
                       <script src="scripts.js"></script>
                     </body>
 
                     </html>
                     """;
-                string replyHeader = $"""
-                    HTTP/1.1 200 OK
-                    Content-Length: {body.Length}
-                    Content-Type: text/html; charset=utf-8
-                    """;
-                string reply = $"""
-                    {replyHeader}
-                    
-                    {body}
-                    """;
-                byte[] replyData = Encoding.UTF8.GetBytes(reply);
-                stream.Write(replyData);
+                byte[] bodyData = Encoding.UTF8.GetBytes(body);
+                // HTTP requires CRLF line endings in the header, and Content-Length counts bytes (not chars).
+                // We close the connection after each response, so tell the client not to reuse it.
+                string replyHeader =
+                    "HTTP/1.1 200 OK\r\n" +
+                    $"Content-Length: {bodyData.Length}\r\n" +
+                    "Content-Type: text/html; charset=utf-8\r\n" +
+                    "Connection: close\r\n" +
+                    "\r\n";
+                stream.Write(Encoding.ASCII.GetBytes(replyHeader));
+                stream.Write(bodyData);
+
+                // Close gracefully: signal end of response, then drain whatever the client still sends.
+                // Closing a socket with unread incoming data makes the OS send a TCP RST instead of a FIN, which browsers report as a connection reset and may discard the response.
+                client.Client.Shutdown(SocketShutdown.Send);
+                try
+                {
+                    while (stream.Read(bytes, 0, bytes.Length) != 0) { }
+                }
+                catch (IOException) { }
             }
         }
     }
